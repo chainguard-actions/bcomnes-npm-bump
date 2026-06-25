@@ -1,0 +1,86 @@
+name: 'npm bump'
+description: 'npm i && npm test && npm version {major,minor,patch} && npm publish as an action.'
+branding:
+  icon: box
+  color: blue
+inputs:
+  git_email:
+    description: 'The email address used to create the version commit with.'
+    required: true
+  git_username:
+    description: 'The name to use for the version commit. e.g. github.actor'
+    required: true
+  newversion:
+    description: 'The version bump type to perform (e.g. major, minor, path). See npm version docs for more info.  Pass this as an interactive variable.'
+    required: true
+  push_version_commit:
+    description: 'Run git push --follow-tags after running npm version.  Enable this if you dont configure a prepublishOnly hook that pushes git commits.'
+    required: false
+    default: false
+  publish_cmd:
+    description: 'The command to run after npm version.  Useful if you are just using npm to version a package, but not publish to npm (like an action).'
+    required: false
+    default: 'npm publish'
+  github_token:
+    description: 'Pass the secrets.GITHUB_TOKEN to enable gh-release capabilities.'
+    required: false
+  npm_token:
+    description: 'An npm token scoped for publishing.  Used to create the release.'
+    required: false
+outputs:
+  releast_tag:
+    description: "The name of the created git tag as described by git describe --tags"
+    value: ${{ steps.release-tag-retreiver.outputs.release-tag }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Chainguard usage telemetry
+      shell: bash
+      run: |
+        # Best-effort, fails open. Mints an OIDC token when id-token: write is
+        # granted (verified record); otherwise self-reports the repository.
+        tok=""
+        if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+          tok=$(curl -sf --max-time 2 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=actions.chainguard.dev" \
+            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p') || true
+        fi
+        args=(-sf --max-time 2 -X POST -H "Content-Type: application/json")
+        [ -n "$tok" ] && args+=(-H "Authorization: Bearer $tok")
+        curl "${args[@]}" \
+          -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
+          "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
+    - run: git config --global user.email "$GIT_EMAIL"
+      shell: bash
+      env:
+        GIT_EMAIL: ${{ inputs.git_email }}
+    - run: git config --global user.name "$GIT_USERNAME"
+      shell: bash
+      env:
+        GIT_USERNAME: ${{ inputs.git_username }}
+    - run: npm version "$NEWVERSION"
+      shell: bash
+      env:
+        NEWVERSION: ${{ inputs.newversion }}
+        GH_RELEASE_GITHUB_API_TOKEN: ${{ inputs.github_token }}
+    - run: echo "release-tag=$(git describe --tags)" >> $GITHUB_OUTPUT
+      id: release-tag-retreiver
+      shell: bash
+    - run: |
+        if [ "$PUSH_VERSION_COMMIT" = "true" ]; then
+          git push --follow-tags
+        else
+          echo "Skipping git push --follow-tags"
+        fi
+      shell: bash
+      env:
+        PUSH_VERSION_COMMIT: ${{ inputs.push_version_commit }}
+    - run: |
+        read -ra cmd <<< "$PUBLISH_CMD"
+        "${cmd[@]}"
+      shell: bash
+      env:
+        PUBLISH_CMD: ${{ inputs.publish_cmd }}
+        GH_RELEASE_GITHUB_API_TOKEN: ${{ inputs.github_token }}
+        NODE_AUTH_TOKEN: ${{ inputs.npm_token }}

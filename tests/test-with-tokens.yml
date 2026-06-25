@@ -1,0 +1,58 @@
+name: Test with github_token and npm_token inputs
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Configure git and prepare clean package.json
+        run: |
+          git config --global user.email "test@example.com"
+          git config --global user.name "Test User"
+          # Reset to a clean state
+          git reset --hard HEAD
+          git clean -fd
+          # Remove any existing version tags that might conflict
+          git tag -d v1.0.0 2>/dev/null || true
+          git tag -d v1.0.1 2>/dev/null || true
+          # Write a minimal package.json with no version lifecycle script
+          printf '{\n  "name": "test-package",\n  "version": "1.0.0",\n  "private": true,\n  "license": "MIT",\n  "scripts": {\n    "test": "echo ok"\n  }\n}\n' > package.json
+          # Commit the new package.json so git working tree is clean
+          git add package.json
+          git commit -m "chore: set up test package.json"
+          # Create initial tag matching the version
+          git tag v1.0.0
+
+      - id: action
+        uses: .
+        with:
+          git_email: "test@example.com"
+          git_username: "Test User"
+          newversion: patch
+          push_version_commit: "false"
+          publish_cmd: echo "skipping publish"
+          github_token: "fake-github-token-for-coverage"
+          npm_token: "fake-npm-token-for-coverage"
+
+      - name: Assert release tag output is set
+        env:
+          ACTUAL: ${{ steps.action.outputs.releast_tag }}
+        run: |
+          echo "actual: $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "FAIL: expected releast_tag output to be non-empty"
+            exit 1
+          fi
+          echo "PASS: releast_tag=$ACTUAL"
+
+      - name: Assert package.json version was bumped to 1.0.1
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "actual version: $VERSION"
+          if [ "$VERSION" != "1.0.1" ]; then
+            echo "FAIL: expected version 1.0.1 but got $VERSION"
+            exit 1
+          fi
+          echo "PASS"
