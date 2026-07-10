@@ -1,0 +1,59 @@
+name: Test version-type major
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Ensure HEAD is on a branch
+        run: |
+          BRANCH=$(git branch --show-current)
+          echo "Current branch: $BRANCH"
+          if [ -z "$BRANCH" ]; then
+            git checkout -b test-branch
+          fi
+
+      - name: Clean up existing tags to avoid conflicts
+        run: |
+          git tag -l | xargs -r git tag -d || true
+
+      - name: Set up npm package
+        run: |
+          git config --global user.email "test@example.com"
+          git config --global user.name "Test User"
+          printf '{\n  "name": "test-package",\n  "version": "1.2.3",\n  "description": "test"\n}\n' > package.json
+          git add package.json
+          git commit -m "chore: add package.json for test"
+
+      - id: action
+        uses: .
+        with:
+          version-type: major
+          git-email: test@example.com
+          git-username: Test User
+          publish-cmd: echo "skipping publish"
+
+      - name: Assert release-tag output is set
+        env:
+          ACTUAL: ${{ steps.action.outputs.release-tag }}
+        run: |
+          echo "actual release-tag: $ACTUAL"
+          if [ -z "$ACTUAL" ]; then
+            echo "FAIL: release-tag output is empty"
+            exit 1
+          fi
+          echo "PASS: release-tag=$ACTUAL"
+
+      - name: Assert version was bumped to 2.0.0
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "actual version: $VERSION"
+          if [ "$VERSION" != "2.0.0" ]; then
+            echo "FAIL: expected version 2.0.0, got $VERSION"
+            exit 1
+          fi
+          echo "PASS"

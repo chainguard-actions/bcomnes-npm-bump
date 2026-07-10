@@ -1,0 +1,55 @@
+name: npm bump
+
+on:
+  workflow_dispatch:
+    inputs:
+      version-type:
+        description: 'Version type'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - custom
+        default: 'patch'
+        required: true
+      new-version:
+        description: 'Custom version (only used when version-type is "custom")'
+        required: false
+
+env:
+  FORCE_COLOR: 3
+
+permissions:
+  contents: write
+
+concurrency: # prevent concurrent releases
+  group: npm-bump
+  cancel-in-progress: true
+
+jobs:
+  version_and_release:
+    runs-on: ubuntu-latest
+    outputs:
+      tagName: ${{ steps.npm-bump.outputs.release-tag }}
+    steps:
+    - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      with:
+        # fetch full history so things like auto-changelog work properly
+        fetch-depth: 0
+    - name: Use Node.js
+      uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
+      with:
+        node-version-file: package.json
+    - run: npm i
+    - name: Version and release
+      uses: bcomnes/npm-bump@2c111ae6763b625b9d8a2c068b328ea5fc33d72d # master
+      id: npm-bump
+      with:
+        version-type: ${{ github.event.inputs['version-type'] }}
+        new-version: ${{ github.event.inputs['new-version'] }}
+        publish-cmd: npm run release # private package; runs releasearoni-gh to create the GitHub release
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+    - env:
+        RELEASE_TAG: ${{ steps.npm-bump.outputs['release-tag'] }}
+      run: echo "$RELEASE_TAG"
