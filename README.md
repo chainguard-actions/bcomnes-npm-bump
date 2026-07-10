@@ -9,6 +9,7 @@ Hardened by [Chainguard](https://www.chainguard.dev) from the upstream action at
 | Version | Tag | Upstream commit |
 |---------|-----|-----------------|
 | v2.2.0 | [`v2.2.0`](https://github.com/chainguard-actions/bcomnes-npm-bump/tree/v2.2.0) | [`25fe0a3`](https://github.com/bcomnes/npm-bump/commit/25fe0a3fccd00496de1c2ab6ff5985499028211d) |
+| v3.0.2 | [`v3.0.2`](https://github.com/chainguard-actions/bcomnes-npm-bump/tree/v3.0.2) | [`8e67058`](https://github.com/bcomnes/npm-bump/commit/8e67058c250579782ed12d6e591c8d07b7b0cae4) |
 
 ## Privacy
 
