@@ -1,0 +1,47 @@
+name: Test version-type input (minor bump)
+on:
+  workflow_dispatch:
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          fetch-depth: 1
+
+      - name: Set up a simple package.json and commit it
+        run: |
+          git config user.email "test@example.com"
+          git config user.name "Test User"
+          printf '{"name":"test-package","version":"100.0.0","private":true}\n' > package.json
+          git add package.json
+          git commit -m "chore: add test package.json"
+
+      - id: action
+        uses: .
+        with:
+          git-email: "test@example.com"
+          git-username: "Test User"
+          version-type: "minor"
+          publish-cmd: "echo skip"
+
+      - name: Assert release-tag output is set
+        env:
+          RELEASE_TAG: ${{ steps.action.outputs.release-tag }}
+        run: |
+          echo "release-tag: $RELEASE_TAG"
+          if [ -z "$RELEASE_TAG" ]; then
+            echo "FAIL: release-tag output is empty"
+            exit 1
+          fi
+          echo "PASS: release-tag is '$RELEASE_TAG'"
+
+      - name: Assert package.json version was bumped to minor
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "package.json version: $VERSION"
+          if [ "$VERSION" != "100.1.0" ]; then
+            echo "FAIL: expected 100.1.0 but got $VERSION"
+            exit 1
+          fi
+          echo "PASS: version is $VERSION"

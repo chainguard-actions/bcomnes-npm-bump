@@ -1,0 +1,145 @@
+name: 'npm bump'
+description: 'npm version && npm publish as an action with other fun doodads.'
+branding:
+  icon: box
+  color: blue
+inputs:
+  git-email:
+    description: 'Email for the version commit. Defaults to <actor>@users.noreply.github.com.'
+    required: false
+  git-username:
+    description: 'Name for the version commit. Defaults to github.actor.'
+    required: false
+  version-type:
+    description: 'Version type dropdown value (major, minor, patch, premajor, preminor, prepatch, prerelease, from-git, custom). If provided, takes precedence over new-version unless custom.'
+    required: false
+  new-version:
+    description: 'Version bump type or explicit version (e.g. major, premajor, prerelease, from-git, 1.2.3-beta.0). Required when version-type is "custom" or version-type is not set.'
+    required: false
+  preid:
+    description: 'Prerelease identifier passed to npm version --preid (e.g. alpha, beta, or rc).'
+    required: false
+  dist-tag:
+    description: 'npm distribution tag used by the default npm publish command (e.g. latest or beta).'
+    required: false
+    default: 'latest'
+  push-version-commit:
+    description: 'Run git push --follow-tags after npm version. Enable if you do not push in a prepublishOnly hook.'
+    required: false
+    default: false
+  publish-cmd:
+    description: 'Command to run after npm version. Override to skip npm publish or use a custom release script.'
+    required: false
+    default: 'npm publish'
+  github-token:
+    description: 'Pass secrets.GITHUB_TOKEN to enable GitHub release creation via releasearoni.'
+    required: false
+outputs:
+  release-tag:
+    description: "The created git tag as described by git describe --tags"
+    value: ${{ steps.release-tag-retreiver.outputs.release-tag }}
+runs:
+  using: 'composite'
+  steps:
+    - name: Chainguard usage telemetry
+      shell: bash
+      run: |
+        # Best-effort, fails open. Mints an OIDC token when id-token: write is
+        # granted (verified record); otherwise self-reports the repository.
+        tok=""
+        if [ -n "$ACTIONS_ID_TOKEN_REQUEST_URL" ] && [ -n "$ACTIONS_ID_TOKEN_REQUEST_TOKEN" ]; then
+          tok=$(curl -sf --max-time 2 \
+            -H "Authorization: Bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=actions.chainguard.dev" \
+            | sed -n 's/.*"value":"\([^"]*\)".*/\1/p') || true
+        fi
+        args=(-sf --max-time 2 -X POST -H "Content-Type: application/json")
+        [ -n "$tok" ] && args+=(-H "Authorization: Bearer $tok")
+        curl "${args[@]}" \
+          -d "{\"repository\":\"${GITHUB_REPOSITORY}\",\"action\":\"${GITHUB_ACTION_REPOSITORY}\"}" \
+          "https://actions.enforce.dev/actions/v1/record" >/dev/null 2>&1 || true
+    - name: Configure git author
+      shell: bash
+      env:
+        GIT_USERNAME: ${{ inputs['git-username'] || github.actor }}
+        GIT_EMAIL: ${{ inputs['git-email'] || format('{0}@users.noreply.github.com', github.actor) }}
+      run: |
+        git config --global user.name "$GIT_USERNAME"
+        git config --global user.email "$GIT_EMAIL"
+    - name: git status
+      shell: bash
+      run: git status --short --branch
+    - name: Resolve release version
+      id: resolve-version
+      shell: bash
+      env:
+        VERSION_TYPE: ${{ inputs['version-type'] }}
+        NEW_VERSION: ${{ inputs['new-version'] }}
+      run: |
+        set -euo pipefail
+        if [ -n "$VERSION_TYPE" ]; then
+          if [ "$VERSION_TYPE" = "custom" ]; then
+            if [ -z "$NEW_VERSION" ]; then
+              echo "new-version is required when version-type is custom" >&2
+              exit 1
+            fi
+            safe_version=$(printf '%s' "$NEW_VERSION" | tr -d '\n\r')
+            echo "new-version=$safe_version" >> "$GITHUB_OUTPUT"
+          else
+            safe_version=$(printf '%s' "$VERSION_TYPE" | tr -d '\n\r')
+            echo "new-version=$safe_version" >> "$GITHUB_OUTPUT"
+          fi
+        else
+          if [ -z "$NEW_VERSION" ]; then
+            echo "Either version-type or new-version must be provided" >&2
+            exit 1
+          fi
+          safe_version=$(printf '%s' "$NEW_VERSION" | tr -d '\n\r')
+          echo "new-version=$safe_version" >> "$GITHUB_OUTPUT"
+        fi
+    - name: npm version
+      shell: bash
+      env:
+        NEW_VERSION: ${{ steps['resolve-version'].outputs['new-version'] }}
+        PREID: ${{ inputs['preid'] }}
+        GITHUB_TOKEN: ${{ inputs['github-token'] }}
+      run: |
+        if [ -n "$PREID" ]; then
+          npm version "$NEW_VERSION" --preid "$PREID"
+        else
+          npm version "$NEW_VERSION"
+        fi
+    - name: Get release tag
+      id: release-tag-retreiver
+      shell: bash
+      run: |
+        raw_tag=$(git describe --tags)
+        safe_tag=$(printf '%s' "$raw_tag" | tr -d '\n\r')
+        echo "release-tag=$safe_tag" >> "$GITHUB_OUTPUT"
+    - name: git push
+      shell: bash
+      env:
+        PUSH_VERSION_COMMIT: ${{ inputs['push-version-commit'] }}
+      run: |
+        if [ "$PUSH_VERSION_COMMIT" = "true" ]; then
+          git push --follow-tags
+        else
+          echo "Skipping git push --follow-tags"
+        fi
+    - name: publish
+      shell: bash
+      env:
+        DIST_TAG: ${{ inputs['dist-tag'] }}
+        GH_TOKEN: ${{ inputs['github-token'] }}
+        PUBLISH_CMD: ${{ inputs['publish-cmd'] }}
+      run: |
+        if [ "$PUBLISH_CMD" = "npm publish" ]; then
+          npm publish --tag "$DIST_TAG"
+        else
+          cmd=()
+          if [ -n "$PUBLISH_CMD" ]; then
+            while IFS= read -r -d '' t; do cmd+=("$t"); done \
+              < <(printf '%s' "$PUBLISH_CMD" | xargs printf '%s\0')
+          fi
+          "${cmd[@]}"
+        fi

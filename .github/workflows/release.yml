@@ -1,0 +1,79 @@
+name: npm bump
+
+on:
+  workflow_dispatch:
+    inputs:
+      version-type:
+        description: 'Version type'
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - prepatch
+          - preminor
+          - premajor
+          - prerelease
+          - from-git
+          - custom
+        default: 'patch'
+        required: true
+      new-version:
+        description: 'Custom version (only used when version-type is "custom")'
+        required: false
+      preid:
+        description: 'Prerelease identifier (used with premajor, preminor, prepatch, or prerelease)'
+        type: choice
+        options:
+          - ''
+          - alpha
+          - beta
+          - rc
+        required: false
+      dist-tag:
+        description: 'npm distribution tag'
+        type: choice
+        options:
+          - latest
+          - beta
+        default: 'latest'
+        required: true
+
+env:
+  FORCE_COLOR: 3
+
+permissions:
+  contents: write
+
+concurrency: # prevent concurrent releases
+  group: npm-bump
+  cancel-in-progress: true
+
+jobs:
+  version_and_release:
+    runs-on: ubuntu-latest
+    outputs:
+      tagName: ${{ steps.npm-bump.outputs.release-tag }}
+    steps:
+    - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      with:
+        # fetch full history so things like auto-changelog work properly
+        fetch-depth: 0
+    - name: Use Node.js
+      uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
+      with:
+        node-version-file: package.json
+    - run: npm i
+    - name: Version and release
+      uses: bcomnes/npm-bump@b587a4f7c366cda0768fca754980054c91dee972 # master
+      id: npm-bump
+      with:
+        version-type: ${{ github.event.inputs['version-type'] }}
+        new-version: ${{ github.event.inputs['new-version'] }}
+        preid: ${{ github.event.inputs['preid'] }}
+        dist-tag: ${{ github.event.inputs['dist-tag'] }}
+        publish-cmd: npm run release # private package; dist-tag only applies to the default npm publish command
+        github-token: ${{ secrets.GITHUB_TOKEN }}
+    - env:
+        RELEASE_TAG: ${{ steps.npm-bump.outputs['release-tag'] }}
+      run: echo "$RELEASE_TAG"
