@@ -10,66 +10,55 @@
 
 **Harden Agent Version:** `2`
 
-Action **bcomnes--npm-bump/v3.0.4** was hardened automatically. 4 finding(s) were identified and resolved across 3 iteration(s).
+Action **bcomnes--npm-bump/v3.0.4** was hardened automatically. 4 finding(s) were identified and resolved across 2 iteration(s).
 
 ## Findings Fixed
 
 ### script-injection (severity: high)
 
-Sub-rule (a): Direct ${{ }} expression interpolation inside run: shell commands. In action.yml, the 'Configure git author' step interpolates ${{ inputs['git-username'] || github.actor }} and ${{ inputs['git-email'] || format(...) }} directly into git config shell commands — an attacker-controlled input value is injected into the shell before quoting. The 'git push' step interpolates ${{ inputs['push-version-commit'] }} directly in an if-condition string. In release.yml, the final run step echoes ${{ steps.npm-bump.outputs['release-tag'] }} directly in a shell command.
+Sub-rule (a): The 'Configure git author' step directly interpolates ${{ inputs['git-username'] || github.actor }} and ${{ inputs['git-email'] || format('{0}@users.noreply.github.com', github.actor) }} inside a run: shell string. Attacker-controlled input values are template-substituted into the shell command before execution, enabling command injection via crafted git-username or git-email inputs.
 
 Locations:
 
-- `action.yml:47`
-- `action.yml:48`
-- `action.yml:91`
-- `.github/workflows/release.yml:68`
+- `action.yml:46`
+
+### script-injection (severity: high)
+
+Sub-rule (a): The 'git push' step directly interpolates ${{ inputs['push-version-commit'] }} inside a run: shell string (used in an `if` condition). Any ${{ }} expression inside a run: block is a script-injection risk regardless of how it is used.
+
+Locations:
+
+- `action.yml:79`
 
 ### github-env-injection (severity: high)
 
-The 'Resolve release version' step writes $NEW_VERSION (from inputs['new-version']) and $VERSION_TYPE (from inputs['version-type']) to $GITHUB_OUTPUT without the required sanitization step (printf '%s' ... | tr -d '\n\r'). An attacker-controlled input containing newlines could inject arbitrary key=value pairs into the GitHub output context. Three unsanitized writes occur: 'echo "new-version=$NEW_VERSION" >> "$GITHUB_OUTPUT"' (twice) and 'echo "new-version=$VERSION_TYPE" >> "$GITHUB_OUTPUT"'.
+The 'Resolve release version' step writes $NEW_VERSION and $VERSION_TYPE (sourced from inputs['new-version'] and inputs['version-type'] respectively) to $GITHUB_OUTPUT without the required sanitization step (printf '%s' ... | tr -d '\n\r'). An attacker can inject newlines to poison GITHUB_OUTPUT and set arbitrary output variables.
 
 Locations:
 
-- `action.yml:63`
-- `action.yml:65`
-- `action.yml:71`
+- `action.yml:57`
 
 ### suspicious-run-content (severity: high)
 
-eval-dynamic: The 'publish' step executes 'eval "$PUBLISH_CMD"' where $PUBLISH_CMD is sourced directly from inputs['publish-cmd'] — a caller-controlled value. This allows any workflow invoking this composite action to supply an arbitrary shell command string that will be executed via eval, enabling full remote code execution on the runner.
+eval-dynamic: The 'publish' step executes `eval "$PUBLISH_CMD"` where PUBLISH_CMD is set from inputs['publish-cmd'] — a fully attacker-controlled value. This allows any caller of the action to execute arbitrary shell commands on the runner by supplying a malicious publish-cmd input.
 
 Locations:
 
-- `action.yml:103`
-
-### unpinned-uses (severity: high)
-
-Three uses: references in release.yml are pinned to mutable tags or branch names instead of immutable 40-character commit SHAs, making the workflow vulnerable to supply-chain attacks: (1) actions/checkout@v7 (tag), (2) actions/setup-node@v7 (tag), (3) bcomnes/npm-bump@master (branch).
-
-Locations:
-
-- `.github/workflows/release.yml:55`
-- `.github/workflows/release.yml:59`
-- `.github/workflows/release.yml:63`
+- `action.yml:93`
 
 ## Iteration Notes
 
 ### Iteration 1
 
-**Fixes applied:** script-injection, github-env-injection, suspicious-run-content, unpinned-uses
+**Fixes applied:** script-injection, github-env-injection, suspicious-run-content
 
 **Notes:**
 
-Fixed all four findings:
-
-1. script-injection (action.yml lines 47-48, 91; release.yml line 68): Moved all ${{ }} expressions out of run: shell strings into step env: blocks. GIT_USERNAME and GIT_EMAIL for git config, PUSH_VERSION_COMMIT for the git push conditional, and RELEASE_TAG for the echo in release.yml.
-
-2. github-env-injection (action.yml lines 63, 65, 71): Added sanitization via `safe_version=$(printf '%s' "$VAR" | tr -d '\n\r')` before all three writes to $GITHUB_OUTPUT in the 'Resolve release version' step.
-
-3. suspicious-run-content (action.yml line 103): Replaced `eval "$PUBLISH_CMD"` with `sh -c "$PUBLISH_CMD"` to eliminate the eval dynamic execution pattern.
-
-4. unpinned-uses (release.yml lines 55, 59, 63): Pinned actions/checkout@v7 to SHA 3d3c42e5aac5ba805825da76410c181273ba90b1, actions/setup-node@v7 to SHA 820762786026740c76f36085b0efc47a31fe5020, and bcomnes/npm-bump@master to SHA b587a4f7c366cda0768fca754980054c91dee972, all with tag/branch comments for readability.
+Fixed all four findings in action.yml:
+1. 'Configure git author' step: moved ${{ inputs['git-username'] || github.actor }} and ${{ inputs['git-email'] || format(...) }} into env: block as GIT_USERNAME and GIT_EMAIL, referenced via shell variables.
+2. 'Resolve release version' step: sanitized NEW_VERSION and VERSION_TYPE before writing to $GITHUB_OUTPUT using printf '%s' "$VAR" | tr -d '\n\r', with two-step capture to preserve exit status under set -euo pipefail.
+3. 'git push' step: moved ${{ inputs['push-version-commit'] }} into env: block as PUSH_VERSION_COMMIT, referenced via shell variable.
+4. 'publish' step: replaced eval "$PUBLISH_CMD" with writing the command to a mktemp file and executing it with bash -eo pipefail, preserving errexit/pipefail behavior matching the step's shell: bash context.
 
 ### Iteration 2
 
@@ -77,13 +66,5 @@ Fixed all four findings:
 
 **Notes:**
 
-Fixed the script injection vulnerability in the 'publish' step of action.yml (line 116). The original code passed the caller-controlled `PUBLISH_CMD` env var directly to `sh -c "$PUBLISH_CMD"`, enabling arbitrary remote code execution. The fix replaces `sh -c "$PUBLISH_CMD"` with a safe xargs-based tokenization pattern: the command string is split into an array using `printf '%s' "$PUBLISH_CMD" | xargs printf '%s\0'` with a NUL-delimited read loop, then executed as `"${cmd[@]}"`. This preserves the ability to run custom publish commands (e.g. `npx semantic-release`) while preventing shell metacharacters from being interpreted as shell syntax. The guard `if [ -n "$PUBLISH_CMD" ]` ensures an empty value doesn't produce a spurious empty argument.
-
-### Iteration 1
-
-**Fixes applied:** github-env-injection
-
-**Notes:**
-
-Fixed the `release-tag-retreiver` step in action.yml (line 98). The original one-liner `echo "release-tag=$(git describe --tags)" >> $GITHUB_OUTPUT` was replaced with a multi-line run block that captures the git tag output into a variable, sanitizes it with `printf '%s' "$raw_tag" | tr -d '\n\r'` to strip newline/carriage-return characters, and then writes the safe value to $GITHUB_OUTPUT. This prevents injection of arbitrary key-value pairs via crafted git tag names.
+Fixed script-injection in the 'publish' step of action.yml. The original code wrote PUBLISH_CMD (from inputs['publish-cmd']) to a temp file and executed it with `bash -eo pipefail`, allowing arbitrary shell code execution. Replaced with xargs-based tokenization: `printf '%s' "$PUBLISH_CMD" | xargs printf '%s\0'` with a null-delimited while/read loop builds an array of tokens, then `"${_cmd_args[@]}"` executes the command with proper argument boundaries. This prevents shell metacharacter injection while preserving the ability to specify a custom publish command with arguments. The ${{ }} expression remains in the env: block.
 

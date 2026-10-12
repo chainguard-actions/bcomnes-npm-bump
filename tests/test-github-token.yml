@@ -30,8 +30,8 @@ jobs:
           git-email: "test@example.com"
           git-username: "Test User"
           new-version: "patch"
-          publish-cmd: "echo skip-publish"
           github-token: ${{ secrets.GITHUB_TOKEN }}
+          publish-cmd: "echo skip-publish"
 
       - name: Assert release-tag output is set
         env:

@@ -83,19 +83,19 @@ runs:
               echo "new-version is required when version-type is custom" >&2
               exit 1
             fi
-            safe_version=$(printf '%s' "$NEW_VERSION" | tr -d '\n\r')
-            echo "new-version=$safe_version" >> "$GITHUB_OUTPUT"
+            safe_new_version="$(printf '%s' "$NEW_VERSION" | tr -d '\n\r')"
+            echo "new-version=$safe_new_version" >> "$GITHUB_OUTPUT"
           else
-            safe_version=$(printf '%s' "$VERSION_TYPE" | tr -d '\n\r')
-            echo "new-version=$safe_version" >> "$GITHUB_OUTPUT"
+            safe_version_type="$(printf '%s' "$VERSION_TYPE" | tr -d '\n\r')"
+            echo "new-version=$safe_version_type" >> "$GITHUB_OUTPUT"
           fi
         else
           if [ -z "$NEW_VERSION" ]; then
             echo "Either version-type or new-version must be provided" >&2
             exit 1
           fi
-          safe_version=$(printf '%s' "$NEW_VERSION" | tr -d '\n\r')
-          echo "new-version=$safe_version" >> "$GITHUB_OUTPUT"
+          safe_new_version="$(printf '%s' "$NEW_VERSION" | tr -d '\n\r')"
+          echo "new-version=$safe_new_version" >> "$GITHUB_OUTPUT"
         fi
     - name: npm version
       shell: bash
@@ -109,13 +109,9 @@ runs:
         else
           npm version "$NEW_VERSION"
         fi
-    - name: Get release tag
+    - run: echo "release-tag=$(git describe --tags)" >> $GITHUB_OUTPUT
       id: release-tag-retreiver
       shell: bash
-      run: |
-        raw_tag=$(git describe --tags)
-        safe_tag=$(printf '%s' "$raw_tag" | tr -d '\n\r')
-        echo "release-tag=$safe_tag" >> "$GITHUB_OUTPUT"
     - name: git push
       shell: bash
       env:
@@ -136,10 +132,9 @@ runs:
         if [ "$PUBLISH_CMD" = "npm publish" ]; then
           npm publish --tag "$DIST_TAG"
         else
-          cmd=()
-          if [ -n "$PUBLISH_CMD" ]; then
-            while IFS= read -r -d '' t; do cmd+=("$t"); done \
-              < <(printf '%s' "$PUBLISH_CMD" | xargs printf '%s\0')
-          fi
-          "${cmd[@]}"
+          _cmd_args=()
+          while IFS= read -r -d '' _token; do
+            _cmd_args+=("$_token")
+          done < <(printf '%s' "$PUBLISH_CMD" | xargs printf '%s\0')
+          "${_cmd_args[@]}"
         fi
